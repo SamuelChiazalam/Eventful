@@ -1,0 +1,80 @@
+import axios from 'axios';
+import { isTokenExpired } from '../utils/token';
+
+// Use the Vite proxy in development, full URL in production
+const API_URL = import.meta.env.VITE_API_URL || 
+  (import.meta.env.DEV ? '/api' : 'https://eventful-api.onrender.com/api');
+
+console.log('API Configuration:', {
+  mode: import.meta.env.DEV ? 'development' : 'production',
+  API_URL,
+  VITE_API_URL: import.meta.env.VITE_API_URL
+});
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Request interceptor to add auth token
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('token');
+    
+    // Check if token exists and is not expired
+    if (token) {
+      if (isTokenExpired(token)) {
+        // Token is expired, remove it
+        console.warn('Token is expired, clearing auth');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        // Redirect to login if on a protected route
+        if (config.url && !config.url.includes('/auth/login') && !config.url.includes('/auth/register')) {
+          window.location.href = '/login';
+        }
+      } else {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+    }
+    console.log('Request:', { method: config.method, url: config.url, baseURL: config.baseURL });
+    return config;
+  },
+  (error) => {
+    console.error('Request error:', error);
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor to handle errors
+api.interceptors.response.use(
+  (response) => {
+    console.log('Response:', { status: response.status, url: response.config.url });
+    return response;
+  },
+  (error) => {
+    console.error('Response error:', {
+      status: error.response?.status,
+      message: error.response?.data?.message,
+      url: error.config?.url,
+      error: error.message
+    });
+    
+    if (error.response?.status === 401) {
+      const requestUrl = error.config?.url || '';
+      const isPublicVerify = requestUrl.includes('/payments/verify-public');
+      const isAuthEndpoint = requestUrl.includes('/auth/login') || requestUrl.includes('/auth/register');
+
+      if (!isPublicVerify && !isAuthEndpoint) {
+        console.warn('Unauthorized access, clearing auth and redirecting to login');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default api;
